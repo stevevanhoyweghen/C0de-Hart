@@ -37,6 +37,10 @@ For more information, please refer to <https://unlicense.org/>
 #define RED_BUTTON_LED_OUTPUT 16
 #define GREEN_BUTTON_INPUT 15
 #define GREEN_BUTTON_LED_OUTPUT 17
+
+#define BUTTON_PRESSED_RED 0
+#define BUTTON_PRESSED_GREEN 1
+
 /*
 ESP32 WROOM 30 Pin version is used. https://www.studiopieters.nl/esp32-pinout/
 
@@ -126,10 +130,24 @@ void handleOSCMessage(OSCMessage& msg) {
     LOG(LOG_INFO, "%s, %i", msg.getAddress(), msg.getInt(0));
 }
 
+/*
 void sendOscButton(char* payload) {
   const char* address = "/button";
 
   LOG(LOG_INFO, "%s: %s", address, payload);
+  OSCMessage msg(address);
+  msg.add(payload);
+  udp.beginPacket(remoteIp, remotePort);
+  msg.send(udp);
+  udp.endPacket();
+  msg.empty();
+}
+*/
+
+void sendOscButton(int32_t payload) {
+  const char* address = "/button";
+
+  LOG(LOG_INFO, "%s: %i", address, payload);
   OSCMessage msg(address);
   msg.add(payload);
   udp.beginPacket(remoteIp, remotePort);
@@ -276,7 +294,7 @@ void loop() {
       case stateGreenButtonPressedStart:
         buttonLedTimer = BUTTON_LED_PRESSED_TIMEOUT;
         analogWrite(RED_BUTTON_LED_OUTPUT, 0);
-        sendOscButton("green");
+        sendOscButton(BUTTON_PRESSED_GREEN);
         dutyCycleIndex = 0;
         state = stateGreenButtonPressedStop;
         break;
@@ -296,7 +314,7 @@ void loop() {
       case stateRedButtonPressedStart:
         buttonLedTimer = BUTTON_LED_PRESSED_TIMEOUT;
         analogWrite(GREEN_BUTTON_LED_OUTPUT, 0);
-        sendOscButton("red");
+        sendOscButton(BUTTON_PRESSED_RED);
         dutyCycleIndex = 0;
         state = stateRedButtonPressedStop;
         break;

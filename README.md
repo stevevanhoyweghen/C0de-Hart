@@ -86,7 +86,7 @@ Receive:
 
 * “/keep_alive”, &lt;integer 0..9999&gt;:
     * No effect, except logging. Optional for Touch Designer server.
-    * “/command”, &lt;ASCII character&gt;:
+* “/command”, &lt;ASCII character&gt;:
       * '0': "Stop all sequence snippets"
       * '1': "Start breathing"
       * '2': "Stop breathing"
