@@ -86,22 +86,23 @@ Receive:
 
 * “/keep_alive”, &lt;integer 0..9999&gt;:
     * No effect, except logging. Optional for Touch Designer server.
+
 * “/command”, &lt;ASCII character&gt;:
-      * '0': "Stop all sequence snippets"
-      * '1': "Start breathing"
-      * '2': "Stop breathing"
-      * '3': "Arm left"
-      * '4': "Arm right"
-      * '5': "Stop arms"
-      * '6': "Head"
-      * '9': "All together now!"
-      * 'a': "Deflate all sequence"
-      * 'b': "Inflate all sequence"
-      * 'c': "Do nothing, all fans minimal"
-      * 'd': "All bags maximum deflation"
-      * 'e': "All bags maximum inflation"
-      * 'f': "Test sequence"
-      * … all others will give a LOG_WARNING, "Unhandled command"
+    * '0': "Stop all sequence snippets"
+    * '1': "Start breathing"
+    * '2': "Stop breathing"
+    * '3': "Arm left"
+    * '4': "Arm right"
+    * '5': "Stop arms"
+    * '6': "Head"
+    * '9': "All together now!"
+    * 'a': "Deflate all sequence"
+    * 'b': "Inflate all sequence"
+    * 'c': "Do nothing, all fans minimal"
+    * 'd': "All bags maximum deflation"
+    * 'e': "All bags maximum inflation"
+    * 'f': "Test sequence"
+    * … all others will give a LOG_WARNING, "Unhandled command"
 
 Send:
 
