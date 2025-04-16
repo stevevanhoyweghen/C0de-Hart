@@ -24,22 +24,52 @@ ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
 OTHER DEALINGS IN THE SOFTWARE.
 
 For more information, please refer to <https://unlicense.org/>
+
+How to use?
+
+Receive from server
+/command <int> => led light animation
+BUTTON_LED_ALTERNATE 0
+BUTTON_LED_RED 1
+BUTTON_LED_GREEN 2
+
+/keep_alive <int>
+int => incremental each message
+
+Send to server
+/command <int> => push button status
+BUTTON_PRESSED_RED 1
+BUTTON_PRESSED_GREEN 2
+BUTTON_UNPRESSED_RED 3
+BUTTON_UNPRESSED_GREEN 4
+
+/keep_alive <int>
+int => incremental each message
+
 */
 #include <WiFi.h>
 #include <esp_task_wdt.h>
 #include <WiFiUdp.h>
 #include <OSCMessage.h>
-#include "log.h"
+#include "log.h"  // Compile with ESP32 Dev Module board setting
 #include "networkConfig.h"
 
-#define PROJECT_INFO "C0de Hart pushbuttons :: V1.0 - 20250303 :: Steve Van Hoyweghen"
+#define PROJECT_INFO "Code Hart push buttons :: V1.1 - 20250416 :: Steve Van Hoyweghen"
 #define RED_BUTTON_INPUT 4
 #define RED_BUTTON_LED_OUTPUT 16
 #define GREEN_BUTTON_INPUT 15
 #define GREEN_BUTTON_LED_OUTPUT 17
 
-#define BUTTON_PRESSED_RED 0
-#define BUTTON_PRESSED_GREEN 1
+#define BUTTON_PRESSED_RED 1
+#define BUTTON_PRESSED_GREEN 2
+#define BUTTON_UNPRESSED_RED 3
+#define BUTTON_UNPRESSED_GREEN 4
+
+#define BUTTON_LED_ALTERNATE 0
+#define BUTTON_LED_RED 1
+#define BUTTON_LED_GREEN 2
+#define BUTTON_LED_NONE 3
+
 
 /*
 ESP32 WROOM 30 Pin version is used. https://www.studiopieters.nl/esp32-pinout/
@@ -60,7 +90,7 @@ ESP32 WROOM 30 Pin version is used. https://www.studiopieters.nl/esp32-pinout/
 * RED_BUTTON_LED_OUTPUT and GREEN_BUTTON_LED_OUTPUT schematic
 
           470 Ohm  Led
-           ____ 
+           ____
 ESP32 0---|____|---|>|----| GND
 
   RED_BUTTON_LED_OUTPUT
@@ -82,7 +112,7 @@ ESP32 0---|____|---|>|----| GND
 
 #define BUTTON_LED_IDLE_TIMEOUT 2
 #define BUTTON_LED_PRESSED_TIMEOUT 15
-#define BUTTON_LED_DIMMED_TIMEOUT 5
+#define BUTTON_LED_DIMMED_TIMEOUT 1
 
 #define WDT_TIMEOUT 10000                  // in ms
 #define CONFIG_FREERTOS_NUMBER_OF_CORES 1  // if 1 core doesn't work, try with 2
@@ -120,14 +150,19 @@ bool debounce(uint8_t input_pin) {
   return !bool(pinStatus & 0x00000001);
 }
 
-void handleOSCMessage(OSCMessage& msg) {
+int handleOSCMessage(OSCMessage& msg) {
   char s[100];
 
   if (msg.fullMatch("/command")) {
-    msg.getString(0, s);
-    LOG(LOG_INFO, "%s, %c", msg.getAddress(), s[0]);
+    int temp = msg.getInt(0);
+    LOG(LOG_INFO, "%s, %i", msg.getAddress(), temp);
+    if (temp == BUTTON_LED_RED || temp == BUTTON_LED_GREEN || temp == BUTTON_LED_ALTERNATE)
+      return temp;
+    //    msg.getString(0, s);
+    //    LOG(LOG_INFO, "%s, %c", msg.getAddress(), s[0]);
   } else if (msg.fullMatch("/keep_alive"))
     LOG(LOG_INFO, "%s, %i", msg.getAddress(), msg.getInt(0));
+  return BUTTON_LED_NONE;
 }
 
 /*
@@ -192,6 +227,7 @@ void setup() {
   pinMode(ON_BOARD_BLUE_LED_OUTPUT, OUTPUT);
   digitalWrite(ON_BOARD_BLUE_LED_OUTPUT, LOW);
 
+  WiFi.setHostname("esp32-code-hart-buttons");
   WiFi.begin(ssid, password);
 
   // Wait for the connection to establish
@@ -232,38 +268,25 @@ void loop() {
   static uint8_t onBoardLedTimer = ON_BOARD_LED_TIMEOUT;
   static uint8_t buttonLedTimer = 0;
 
-
   static uint16_t ledValue = 0;
   static uint8_t dutyCycleIndex = 0;
   //const uint8_t dutyCycleInRest[] = { 0, 32, 64, 96, 128, 150, 182, 214, UINT8_MAX, 214, 182, 150, 128, 96, 64, 32 };
   //const uint8_t dutyCycleInRest[] = { 0, 17, 17 * 2, 17 * 4, 17 * 7, 17 * 11, UINT8_MAX, 17 * 15, 17 * 11, 17 * 7, 17 * 4, 17 * 2, 17, 0 };  // UINT8_MAX = 255 = 3*5*17
   const uint8_t dutyCycleStarted[] = { 0, UINT8_MAX };
+  const uint8_t dutyCycleButtonSelect[] = {
+    0, UINT8_MAX,
+    0, 0, UINT8_MAX, UINT8_MAX, 0, 0, 0, UINT8_MAX, UINT8_MAX, UINT8_MAX,
+    0, 0, 0, 0, UINT8_MAX, UINT8_MAX, UINT8_MAX, UINT8_MAX,
+    0, 0, 0, UINT8_MAX, UINT8_MAX, UINT8_MAX, 0, 0, UINT8_MAX, UINT8_MAX
+  };
+
   enum { stateIdle,
-         stateGreenButtonPressedStart,
-         stateGreenButtonPressedStop,
-         stateRedButtonPressedStart,
-         stateRedButtonPressedStop,
-         stateLedsDimmed };
+         stateGreenButtonPressed,
+         stateRedButtonPressed,
+         stateButtonsUnpressed };
   static uint8_t state = stateIdle;
   static uint8_t previousState = UINT8_MAX;
-
-  // Check for incoming data
-  int packetSize = udp.parsePacket();
-  if (packetSize) {
-    // Allocate buffer for incoming packet
-    uint8_t incomingPacket[packetSize];
-    udp.read(incomingPacket, packetSize);
-
-    // Parse the incoming OSC message
-    OSCMessage msg;
-    msg.fill(incomingPacket, packetSize);
-
-    if (msg.hasError())
-      LOG(LOG_ERROR, "%s", msg.getError());
-    else
-      // Handle the OSC message
-      handleOSCMessage(msg);
-  }
+  static int buttonLed = BUTTON_LED_ALTERNATE;
 
   // Check if timer event occured
   if (xSemaphoreTake(timerSemaphore, 0) == pdTRUE) {
@@ -275,67 +298,97 @@ void loop() {
     if (wdtFlagCopy)
       esp_task_wdt_reset();
 
+    // Check for incoming data
+    int packetSize = udp.parsePacket();
+    if (packetSize) {
+      // Allocate buffer for incoming packet
+      uint8_t incomingPacket[packetSize];
+      udp.read(incomingPacket, packetSize);
+
+      // Parse the incoming OSC message
+      OSCMessage msg;
+      msg.fill(incomingPacket, packetSize);
+
+      if (msg.hasError()) {
+        buttonLed = BUTTON_LED_ALTERNATE;
+        LOG(LOG_ERROR, "%s", msg.getError());
+      } else {
+        // Handle the OSC message
+        int buttonLedTemp = handleOSCMessage(msg);
+        if (buttonLedTemp != BUTTON_LED_NONE)
+          buttonLed = buttonLedTemp;
+      }
+    }
+
     previousState = state;
     switch (state) {
       case stateIdle:
-        if (debounce(GREEN_BUTTON_INPUT))
-          state = stateGreenButtonPressedStart;
-        else if (debounce(RED_BUTTON_INPUT))
-          state = stateRedButtonPressedStart;
-        else if (buttonLedTimer-- == 0) {
-          buttonLedTimer = BUTTON_LED_IDLE_TIMEOUT;
-          uint8_t ledIntensity = (ledValue > UINT8_MAX ? UINT8_MAX - (ledValue - UINT8_MAX) : ledValue);  // 0..255..0
-          ledValue = (ledValue + 17) % (UINT8_MAX * 2 + 1);                                               // 0..510
-          analogWrite(RED_BUTTON_LED_OUTPUT, ledIntensity);
-          analogWrite(GREEN_BUTTON_LED_OUTPUT, UINT8_MAX - ledIntensity);
+        if (debounce(GREEN_BUTTON_INPUT)) {
+          sendOscButton(BUTTON_PRESSED_GREEN);
+          analogWrite(RED_BUTTON_LED_OUTPUT, 0);
+          dutyCycleIndex = 0;
+          state = stateGreenButtonPressed;
+        } else if (debounce(RED_BUTTON_INPUT)) {
+          sendOscButton(BUTTON_PRESSED_RED);
+          analogWrite(GREEN_BUTTON_LED_OUTPUT, 0);
+          dutyCycleIndex = 0;
+          state = stateRedButtonPressed;
+        }
+
+        switch (buttonLed) {
+          case BUTTON_LED_RED:
+            analogWrite(GREEN_BUTTON_LED_OUTPUT, 0);
+            dutyCycleIndex = (dutyCycleIndex + 1) % sizeof(dutyCycleButtonSelect);
+            analogWrite(RED_BUTTON_LED_OUTPUT, dutyCycleButtonSelect[dutyCycleIndex]);
+            break;
+
+          case BUTTON_LED_GREEN:
+            analogWrite(RED_BUTTON_LED_OUTPUT, 0);
+            dutyCycleIndex = (dutyCycleIndex + 1) % sizeof(dutyCycleButtonSelect);
+            analogWrite(GREEN_BUTTON_LED_OUTPUT, dutyCycleButtonSelect[dutyCycleIndex]);
+            break;
+
+          case BUTTON_LED_ALTERNATE:
+            uint8_t ledIntensity = (ledValue > UINT8_MAX ? UINT8_MAX - (ledValue - UINT8_MAX) : ledValue);  // 0..255..0
+            ledValue = (ledValue + 17) % (UINT8_MAX * 2 + 1);                                               // 0..510
+            analogWrite(RED_BUTTON_LED_OUTPUT, ledIntensity);
+            analogWrite(GREEN_BUTTON_LED_OUTPUT, UINT8_MAX - ledIntensity);
+            break;
         }
         break;
 
-      case stateGreenButtonPressedStart:
-        buttonLedTimer = BUTTON_LED_PRESSED_TIMEOUT;
-        analogWrite(RED_BUTTON_LED_OUTPUT, 0);
-        sendOscButton(BUTTON_PRESSED_GREEN);
-        dutyCycleIndex = 0;
-        state = stateGreenButtonPressedStop;
-        break;
-
-      case stateGreenButtonPressedStop:
-        if (buttonLedTimer-- == 0) {
-          buttonLedTimer = BUTTON_LED_DIMMED_TIMEOUT;
+      case stateGreenButtonPressed:
+        if (!debounce(GREEN_BUTTON_INPUT)) {
+          sendOscButton(BUTTON_UNPRESSED_GREEN);
           analogWrite(GREEN_BUTTON_LED_OUTPUT, 0);
+          buttonLedTimer = BUTTON_LED_DIMMED_TIMEOUT;
           ledValue = 0;  // Start with illuminated green and dimmed red led next stateIdle
-          state = stateLedsDimmed;
+          state = stateButtonsUnpressed;
         } else {
           dutyCycleIndex = (dutyCycleIndex + 1) % sizeof(dutyCycleStarted);
           analogWrite(GREEN_BUTTON_LED_OUTPUT, dutyCycleStarted[dutyCycleIndex]);
         }
         break;
 
-      case stateRedButtonPressedStart:
-        buttonLedTimer = BUTTON_LED_PRESSED_TIMEOUT;
-        analogWrite(GREEN_BUTTON_LED_OUTPUT, 0);
-        sendOscButton(BUTTON_PRESSED_RED);
-        dutyCycleIndex = 0;
-        state = stateRedButtonPressedStop;
-        break;
-
-      case stateRedButtonPressedStop:
-        if (buttonLedTimer-- == 0) {
-          buttonLedTimer = BUTTON_LED_DIMMED_TIMEOUT;
+      case stateRedButtonPressed:
+        if (!debounce(RED_BUTTON_INPUT)) {
+          sendOscButton(BUTTON_UNPRESSED_RED);
           analogWrite(RED_BUTTON_LED_OUTPUT, 0);
+          buttonLedTimer = BUTTON_LED_DIMMED_TIMEOUT;
           ledValue = UINT8_MAX + 1;  // Start with illuminated red and dimmed green led next stateIdle
-          state = stateLedsDimmed;
+          state = stateButtonsUnpressed;
         } else {
           dutyCycleIndex = (dutyCycleIndex + 1) % sizeof(dutyCycleStarted);
           analogWrite(RED_BUTTON_LED_OUTPUT, dutyCycleStarted[dutyCycleIndex]);
         }
         break;
 
-      case stateLedsDimmed:
+      case stateButtonsUnpressed:
         if (buttonLedTimer == 0) {
           dutyCycleIndex = 0;
           buttonLedTimer = 0;
           state = stateIdle;
+          buttonLed = BUTTON_LED_ALTERNATE;
         } else
           buttonLedTimer--;
         break;
